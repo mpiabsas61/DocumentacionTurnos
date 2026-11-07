@@ -1,0 +1,61 @@
+@startuml
+
+title Diagrama de secuencia - Autenticación entre API de turnos y API de usuarios
+
+actor Administrador as a
+participant Web as w
+participant "API de turnos" as apit
+participant "API de usuarios" as apiu
+database "DB usuarios" as dbu
+
+autoactivate on
+
+== 1. Usuario -> API de turnos: autenticación con JWT ==
+
+a -> w: dar de alta profesional {usuario_id, especialidad}
+w -> apit: POST /profesionales -h Authorization: Bearer {JWT} {usuario_id, especialidad}
+apit -> apit: verificarJWT({JWT}) con JWT_SECRET
+apit --> apit: req.usuario = {usuario_id: id, rol} / error
+note right apit
+  verifica firma y expiración localmente:
+  no llama a la API de usuarios.
+  El JWT lo emitió la API de usuarios
+  con el mismo JWT_SECRET
+end note
+
+alt JWT inválido o ausente
+  apit --> w: HTTP 401 unauthorized {error}
+else rol != 'administrador'
+  apit --> w: HTTP 403 forbidden {error}
+else autorizado
+
+  == 2. API de turnos -> API de usuarios: autenticación entre servicios ==
+
+  apit -[#blue]> apiu: GET /interno/usuarios/{usuario_id} -h X-API-Key: {API_KEY_INTERNA}
+  note right apiu
+    API_KEY_INTERNA es la misma en las dos APIs.
+    El JWT del administrador NO se reenvía
+  end note
+  apiu -> apiu: comparar X-API-Key con API_KEY_INTERNA
+  apiu --> apiu: ok / error
+
+  alt X-API-Key ausente o distinta
+    apiu --> apit: HTTP 401 unauthorized
+    apit --> w: HTTP 500 {error}
+    note right apit
+      error de configuración entre servicios:
+      no se expone el detalle al cliente
+    end note
+  else API de usuarios no responde (timeout 5 s)
+    apit --> w: HTTP 500 {error}
+  else clave válida
+    apiu -[#red]> dbu: findOne usuario {_id: usuario_id}
+    dbu --> apiu: {usuario} / null
+    apiu --> apit: HTTP 200 {nombre, apellido, rol, activo} / HTTP 404
+    apit --> w: continúa el alta \n(ver Diagrama registro profesional en turnos)
+  end
+
+end
+
+@enduml
+    

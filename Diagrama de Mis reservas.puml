@@ -1,0 +1,62 @@
+@startuml
+
+title Diagrama de secuencia - Consulta de mis reservas
+
+actor Usuario as u
+participant Web as w
+participant "API de turnos" as apit
+database "DB turnos" as dbt
+
+autoactivate on
+
+u -> w: ver mis reservas
+w -> apit: GET /reservas -h Authorization: {JWT}
+apit -> apit: verificarJWT({JWT})
+apit --> apit: {usuario_id, rol} / error
+note right apit
+  decodifica, valida firma
+  y expiración localmente
+end note
+
+alt JWT válido
+
+  apit -> apit: fechaHoy()
+  apit --> apit: {hoy}
+
+  apit -> dbt: SELECT * from turno where usuario_id={usuario_id} and estado='reservado' \nand fecha >= {hoy} order by fecha, hora_inicio
+  dbt --> apit: {turnos}
+  note right apit
+    usuario_id sale del JWT,
+    nunca de la request
+  end note
+
+  alt el usuario no tiene reservas
+    apit --> w: HTTP 200 []
+  else tiene reservas
+
+    par en paralelo
+      apit -> dbt: SELECT id, nombre, categoria, duracion, precio from servicio \nwhere id in ({turnos.servicio_id})
+      dbt --> apit: {servicios}
+    else
+      apit -> dbt: SELECT id, nombre, apellido, especialidad from profesional \nwhere id in ({turnos.profesional_id})
+      dbt --> apit: {profesionales}
+    end
+
+    apit -> apit: unir turnos con servicio y profesional
+    apit --> apit: {reservas}
+
+    apit --> w: HTTP 200 {reservas}
+    w --> u: mostrar mis reservas
+
+  end
+
+else JWT inválido
+  apit --> w: HTTP 401 unauthorized {error}
+end
+
+note over u, dbt
+  error de base de datos → HTTP 500 {error}
+end note
+
+@enduml
+    
